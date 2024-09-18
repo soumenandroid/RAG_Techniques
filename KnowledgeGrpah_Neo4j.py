@@ -60,14 +60,24 @@ class RAG_Graph:
     def create_vector_index(self):
         model_name='sentence-transformers/all-mpnet-base-v2'
        # model_name='sentence-transformers/all-MiniLM-L6-v2'
-        self.vector_index = Neo4jVector.from_existing_index(
+        ''' self.vector_index = Neo4jVector.from_existing_index(
             HuggingFaceEmbeddings(model_name =model_name,
                                          model_kwargs={'device':'cpu'}),
             url=os.environ["NEO4J_URI"],
             username=os.environ["NEO4J_USERNAME"],
             password=os.environ["NEO4J_PASSWORD"],
-            index_name="vector",
-        )   
+            index_name='entity',
+        ) '''
+        #self.vector_index = 'entity'
+        self.vector_index = Neo4jVector.from_existing_graph(
+            HuggingFaceEmbeddings(model_name =model_name,
+                                         model_kwargs={'device':'cpu'}),
+            search_type="hybrid",
+            node_label="Document",
+            text_node_properties=["text"],
+            embedding_node_property="embedding"
+        )
+        
     
     def prepare_chat_template(self):
         prompt = ChatPromptTemplate.from_messages(
@@ -134,8 +144,9 @@ class RAG_Graph:
 
 
     def ask_question_chain(self, query):
-        self.graph.query("CREATE FULLTEXT INDEX entity IF NOT EXISTS FOR (e:__Entity__) ON EACH [e.id]")
         self.create_vector_index()
+        self.graph.query("CREATE FULLTEXT INDEX entity IF NOT EXISTS FOR (e:__Entity__) ON EACH [e.id]")
+        
         self.prepare_chat_template()
 
         template = """Answer the question based only on the following context
@@ -161,10 +172,44 @@ class RAG_Graph:
         result = chain.invoke(query)
         return result
 
+    def retriever1(self,prompt1):
+        # Retriever
+
+        self.graph.query(
+            "CREATE FULLTEXT INDEX entity IF NOT EXISTS FOR (e:__Entity__) ON EACH [e.id]")
+
+        # Extract entities from text
+        class Entities(BaseModel):
+            """Identifying information about entities."""
+
+            names: List[str] = Field(
+                ...,
+                description="All the person, organization, or business entities that "
+                "appear in the text",
+            )
+
+        prompt = ChatPromptTemplate.from_messages(
+            [
+                (
+                    "system",
+                    "You are extracting organization and person entities from the text.",
+                ),
+                (
+                    "human",
+                    "Use the given format to extract information from the following "
+                    "input: {question}",
+                ),
+            ]
+        )
+
+        entity_chain = prompt | self.llm.with_structured_output(Entities)
+        result = entity_chain.invoke(prompt1)
+        print(result)
+
 
 class Entities(BaseModel):
     """ Identify information about entities"""
     names: List[str] = Field(
         ...,
-        description = "All the fields, or business fules that appear in the text"
+        description = "All the fields, or business rules that appear in the text"
     )
